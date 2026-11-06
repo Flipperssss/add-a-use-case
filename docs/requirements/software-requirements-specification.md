@@ -218,7 +218,7 @@ Authorship metadata (FR-HIS-authorship-metadata) is in scope for the initial rel
 
 **FR-SEC-deny-unauthorized (Event-Driven):** When an unauthorized user attempts to access a protected resource, the system shall deny access and provide an appropriate error message. _(Part of FEAT-administration.)_
 
-**FR-SEC-active-account (Ubiquitous):** The system shall deny authentication and access to protected resources for a deactivated student or instructor account, regardless of otherwise-valid credentials, until the account is reactivated, per BR-student-lifecycle and BR-instructor-lifecycle. _(Part of FEAT-administration.)_
+**FR-SEC-active-account (Ubiquitous):** The system shall deny login for a deactivated student or instructor account and reject a previously issued JWT with `401` on the next protected request while the account remains deactivated, until reactivation, per BR-student-lifecycle and BR-instructor-lifecycle. _(Part of FEAT-administration.)_
 
 ### *Notification Requirements*
 

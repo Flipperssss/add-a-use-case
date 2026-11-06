@@ -151,7 +151,7 @@ C4Component
     Container(spa, "SPA", "Vue 3 / TypeScript", "Course and team administration UI")
 
     Container_Boundary(api, "REST API Application (Spring Boot)") {
-        Component(security, "security", "Spring Security filter chain", "JWT login and request authentication; AuthorizationManagers check ownership and membership")
+        Component(security, "security", "Spring Security filter chain", "JWT login and request authentication; will check current account status on each protected request; AuthorizationManagers check ownership and membership")
         Component(web, "SPA serving", "Spring MVC static resources", "Serves the bundled SPA; forwards UI routes to index.html")
         Component(actuator, "actuator", "Spring Boot Actuator", "Health and info management endpoints")
         Component(user, "user", "Spring MVC + Spring Data JPA", "User accounts, invitations, password reset")
@@ -166,7 +166,7 @@ C4Component
 
     Rel(web, spa, "Delivers", "HTTPS")
     Rel(spa, security, "Logs in; sends every API request through", "JSON/HTTPS")
-    Rel(security, user, "Loads the authenticated user from; passes authorized requests to")
+    Rel(security, user, "Will check current account status and load authenticated-user data from; passes authorized requests to")
     Rel(security, org, "Checks ownership and membership in; passes authorized requests to")
     Rel(security, people, "Passes authorized requests to")
     Rel(security, rubric, "Checks rubric ownership in; passes authorized requests to")
@@ -302,8 +302,14 @@ sequenceDiagram
     API-->>SPA: Result { token: JWT (RSA-2048, 2h) }
     SPA->>SPA: store token (Pinia), set Bearer header
     SPA->>API: GET /api/v1/... (Bearer JWT)
-    API->>API: verify JWT, then AuthorizationManager (ownership/membership)
-    API-->>SPA: Result { data }
+    API->>API: verify JWT signature and expiry
+    API->>DB: load current account status by userId
+    alt account enabled
+        API->>API: AuthorizationManager (ownership/membership)
+        API-->>SPA: Result { data }
+    else account deactivated
+        API-->>SPA: 401; protected request denied
+    end
 ```
 
 ### *WAR submission (representative course-management flow)*
@@ -430,8 +436,9 @@ Single-tenant (`CO-single-tenant`): one deployment serves one institution. The t
 
 - **Login:** HTTP Basic (email + password) → server issues a JWT (`AuthController` / `JwtProvider`). Passwords hashed with **BCrypt (strength 12)**.
 - **Tokens:** self-issued JWTs, **RSA-2048** signature, **2-hour** expiry, claims `sub`, `userId`, space-delimited `authorities`. Stateless OAuth2 resource server (`SessionCreationPolicy.STATELESS`).
+- **Active-account check (target design):** after JWT signature and expiry validation, each protected request checks the current persisted account status before endpoint authorization. A deactivated account is rejected with `401` on its next request, including requests carrying a previously issued JWT (FR-SEC-active-account). The check is not implemented yet; see its in-progress row in [traceability](../traceability.md).
 - **Provisioning:** invitation-gated registration (`user/userinvitation` — `validateUserInvitation` rejects any sign-up without a matching course-admin-issued invitation; see Known gaps); password reset via a one-time token valid **5 minutes**.
-- **Known gaps:** no token **refresh** or **revocation/blocklist** — a token is valid for its full 2h (a leaked token can't be revoked; logout is client-side only). The RSA key regenerates per startup (KD-self-issued-jwt). **`POST /students` and `POST /instructors` are `permitAll()` at the security-filter level, but registration is gated in the service layer**: both paths call `validateUserInvitation`, which rejects any registration lacking a course-admin-issued, single-use invitation whose email, token, role, course, and section all match (invitations are created via UC-STU-invite-students / UC-INS-invite-instructors). So account creation is **not** open self-registration — a stranger cannot self-provision, and an instructor account requires an *instructor* invitation. The residual concern is defense-in-depth: the only gate is service-layer (there is no filter-chain authorization rule), and the endpoint is unauthenticated and unthrottled (rate limiting is [TD-auth-rate-limit](#risks-and-technical-debt)).
+- **Known gaps:** no general token **refresh** or **revocation/blocklist** — a token for an enabled account remains valid for its full 2h (a leaked token cannot be revoked while the account remains enabled; logout is client-side only). The designed per-request active-account check will block a token while its account is disabled but is not implemented yet and will not revoke the signed token itself. The RSA key regenerates per startup (KD-self-issued-jwt). **`POST /students` and `POST /instructors` are `permitAll()` at the security-filter level, but registration is gated in the service layer**: both paths call `validateUserInvitation`, which rejects any registration lacking a course-admin-issued, single-use invitation whose email, token, role, course, and section all match (invitations are created via UC-STU-invite-students / UC-INS-invite-instructors). So account creation is **not** open self-registration — a stranger cannot self-provision, and an instructor account requires an *instructor* invitation. The residual concern is defense-in-depth: the only gate is service-layer (there is no filter-chain authorization rule), and the endpoint is unauthenticated and unthrottled (rate limiting is [TD-auth-rate-limit](#risks-and-technical-debt)).
 
 #### **Authorization**
 
@@ -640,7 +647,7 @@ The functional structure (the [component views](#building-block-view) above) is 
 | TD-actuator-exposure | ~~P0~~ **Closed** | Debt (config) → **incident, remediated** | **Confirmed live 2026-09-06**, both prod and staging: `/actuator/env` returned unmasked values to an anonymous caller, disclosing database and mail credentials, Azure App Service auth keys, managed-identity material and subscription/Key Vault identifiers. Prod was running an older jar (1.5.0) carrying the pre-fix config | **Closed 2026-09-06.** Code fix merged (PR #61) and deployed: safe exposure baseline, `EndpointRequest` rules (health/info anonymous, rest `ROLE_admin`), `info` trimmed, covered by `ActuatorSecurityIntegrationTest`. Endpoint closure verified on both slots by unauthenticated request. **Both disclosed credentials rotated** the same evening (database admin password reset and re-secreted; Google account password changed, which invalidates prior app passwords, and a new app password issued), verified by a cold-start health check returning `UP`: the mail contributor authenticates a fresh SMTP session per check, so `UP` after the old app password was invalidated proves the app is running on the new secrets. Managed-identity and App Service auth values rotated implicitly by the restarts. Residual network exposure split out as TD-db-public-access | Observability, Security |
 | TD-ferpa-retention | P1 | Debt (FERPA) | No retention / deletion / end-of-course purge, and no student data access/correction workflow for education records | Define a retention schedule + deletion/anonymization + data-subject workflows | Security, Data |
 | TD-open-registration | P3 | Debt (security, defense-in-depth) | Registration endpoints (`POST /students`, `/instructors`) are `permitAll` at the filter; account creation is gated **only** in the service layer by `validateUserInvitation` (course-admin-issued single-use invitation matching email/token/role/course/section). Not open registration — but the sole gate is service-layer and the endpoint is unauthenticated/unthrottled | Add a filter-chain rule and/or rate limiting (TD-auth-rate-limit); keep the invitation gate | Security |
-| TD-jwt-revocation | P2 | Debt (security) | No JWT revocation/refresh; a leaked token is valid its full 2-hour life (logout is client-side only) | Short-lived access + refresh tokens, or a revocation list / token version | Security |
+| TD-jwt-revocation | P2 | Debt (security) | No general JWT revocation/refresh; a token for an enabled account remains valid for its full 2-hour life (logout is client-side only). The designed per-request active-account check will reject disabled accounts but is not implemented yet; the signed token itself is not revoked | Short-lived access + refresh tokens, or a revocation list / token version | Security |
 | TD-wildcard-cors | P2 | Debt (security) | Wildcard CORS (`allowedOrigins("*")`) — low risk given bearer (non-cookie) auth, but not best practice | Allowlist the SPA origin per profile | Security |
 | TD-auth-rate-limit | P2 | Debt (security) | No rate limiting on auth endpoints; `/users/exists/{email}` enables email enumeration | Add throttling/rate limits; restrict the exists endpoint | Security |
 | TD-per-startup-key | P2 | Debt (scaling) | Per-startup RSA key: redeploy forces re-login and blocks multi-instance token verification | Externalize/persist the keypair (shared JWKS) | KD-self-issued-jwt, Deployment |

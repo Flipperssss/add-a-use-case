@@ -1462,6 +1462,7 @@ Details:
 
 **Postconditions:**
 - POST-1. The student's account is deactivated.
+- POST-2. The student's course-section and team memberships and existing work are retained.
 
 **Main Success Scenario:**
 1. The course admin or instructor indicates to deactivate a student.
@@ -1473,12 +1474,23 @@ Details:
 7. Use case ends.
 
 **Extensions:**
+- **4a. The course admin or instructor cancels before submitting the deactivation:**
+  - 4a1. The system leaves the student's account active and the use case ends.
+- **5a. The student is already deactivated when the request is submitted:**
+  - 5a1. The system informs the course admin or instructor that the account is already deactivated and makes no further change.
+  - 5a2. Use case ends.
+- **5b. The student does not exist or the actor is not authorized to deactivate her:**
+  - 5b1. The system denies the request with a generic `403 Forbidden` response and makes no change.
+  - 5b2. Use case ends.
+
 **Priority:** Low
 **Frequency of Use:** Rare. Occurs occasionally when a student withdraws from a course section.
 **Business Rules:** BR-student-lifecycle
 
 **Associated Information:**
-- Consequence of the deactivation: The student will no longer be able to log in or submit weekly activity reports and peer evaluations, but the student's account and her previously submitted work are kept in the system. Deactivation will NOT remove the student from the system, and the account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). This is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete. The course admin or instructor shall be able to cancel the use case at any time prior to submitting it.
+- Deactivation applies to the student's account across Project Pulse. It prevents login and access to protected resources, including through a previously issued token, on the next request while the account is deactivated.
+- Deactivation does not remove the student from her course section or team and does not delete her existing weekly activity reports or peer evaluations. A deactivated student is not a target for a new peer evaluation; an evaluation submitted about her before deactivation remains editable by its active evaluator until its ordinary submission window closes (BR-student-lifecycle, BR-evaluation-editable-until-close).
+- The system informs only the course admin or instructor performing the action; it does not notify the student. The account can be reactivated in the future (UC-STU-reactivate-student: Reactivate a student). Deactivation is distinct from deletion (UC-STU-delete-student: Delete a student), which is a physical, unrecoverable delete. The course admin or instructor can cancel at any time before submitting the deactivation; cancellation leaves the account unchanged.
 
 **Related Use Cases:** UC-STU-delete-student: Delete a student; UC-STU-reactivate-student: Reactivate a student
 **Assumptions:**
@@ -2202,9 +2214,9 @@ Report generating algorithm: N/A
 
 **Main Success Scenario:**
 1. The student indicates to submit a peer evaluation for the previous week.
-2. The system asks the student to provide peer evaluations for every team member.
+2. The system asks the student to provide peer evaluations for every active team member.
 3. See the "Details" defined in the Associated Information of this use case.
-4. The student evaluates each team member (self included) and confirms that she has finished.
+4. The student evaluates each active team member (self included) and confirms that she has finished.
 5. The system validates the student's inputs according to the "Details" defined in the Associated Information of this use case.
 6. The system displays the details of the peer evaluation and asks the student to confirm the evaluation and submission.
 7. The system notes that a submitted peer evaluation remains editable while its submission window is open; the student may re-submit it to update it until the window closes (BR-evaluation-editable-until-close, BR-evaluation-submission-window).
@@ -2222,18 +2234,21 @@ Report generating algorithm: N/A
 - **1c. The student is not assigned to a team:**
   - 1c1. The system does not accept a peer evaluation and informs the student that she must be assigned to a team before she can submit peer evaluations (BR-team-assignment-required).
   - 1c2. Use case ends.
+- **4b. The student submits a new evaluation for a deactivated teammate:**
+  - 4b1. The system does not save that evaluation and informs the student that a deactivated student is not an eligible target for a new peer evaluation (BR-student-lifecycle).
+  - 4b2. The student removes the ineligible target and returns to step 4.
 - **4a. Input validation rule violation:**
   - 4a1. The system alerts the student that an input validation rule is violated and displays the nature and location of the error.
   - 4a2. The student corrects the mistake and returns to step 4 of the normal flow.
 
 **Priority:** High
 **Frequency of Use:** Approximately 35-40 users, 1 usage per week.
-**Business Rules:** BR-team-scoped-access (the student evaluates the members of a team she belongs to, and no other team), BR-team-assignment-required (only a student assigned to a team submits one), BR-active-weeks, BR-evaluation-editable-until-close, BR-evaluation-submission-window, BR-evaluation-private-comment
+**Business Rules:** BR-team-scoped-access (the student evaluates the members of a team she belongs to, and no other team), BR-team-assignment-required (only a student assigned to a team submits one), BR-active-weeks, BR-evaluation-editable-until-close, BR-evaluation-submission-window, BR-evaluation-private-comment, BR-student-lifecycle
 
 **Associated Information:**
 
 Details:
-- Every team member MUST be evaluated.
+- Every active team member MUST be evaluated. A previously submitted evaluation of a student who is later deactivated remains editable until the submission window closes (BR-student-lifecycle, BR-evaluation-editable-until-close).
 - Scores MUST be integers.
 
 Example (each team member, self included, is evaluated on every rubric criterion):
