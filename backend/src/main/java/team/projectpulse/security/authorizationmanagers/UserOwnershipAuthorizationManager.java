@@ -41,7 +41,7 @@ public class UserOwnershipAuthorizationManager implements AuthorizationManager<R
         }
         if (studentId != null) {
             return new AuthorizationDecision(
-                    this.studentSecurityService.isCurrentUserInstructorOfStudentSection(studentId)
+                    this.studentSecurityService.canManageLifecycle(studentId)
                             || this.studentSecurityService.isStudentSelf(studentId));
         }
 

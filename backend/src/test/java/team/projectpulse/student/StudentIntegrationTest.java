@@ -3,6 +3,7 @@ package team.projectpulse.student;
 import tools.jackson.databind.json.JsonMapper;
 import team.projectpulse.AbstractIntegrationTest;
 import team.projectpulse.system.StatusCode;
+import org.assertj.core.api.Assertions;
 import org.hamcrest.Matchers;
 import org.json.JSONObject;
 import org.junit.jupiter.api.BeforeEach;
@@ -17,6 +18,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
+import team.projectpulse.instructor.InstructorRepository;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -35,6 +37,12 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
 
     @Autowired
     JsonMapper jsonMapper;
+
+    @Autowired
+    StudentRepository studentRepository;
+
+    @Autowired
+    InstructorRepository instructorRepository;
 
     String adminToken;
 
@@ -232,7 +240,7 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
         studentDto.put("firstName", "John (updated)");
         studentDto.put("lastName", "Smith");
         studentDto.put("email", "j.smith@abc.edu");
-        studentDto.put("enabled", false); // Student cannot change their enabled status.
+        studentDto.put("enabled", true); // Student cannot change their enabled status.
         studentDto.put("roles", "instructor"); // Student cannot change their role.
 
         String json = this.jsonMapper.writeValueAsString(studentDto);
@@ -268,6 +276,113 @@ class StudentIntegrationTest extends AbstractIntegrationTest {
                 .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN))
                 .andExpect(jsonPath("$.message").value("No permission."))
                 .andExpect(jsonPath("$.data").value("Access Denied"));
+    }
+
+    @Test
+    void testAssignedInstructorDeactivatesStudentAndKeepsMemberships() throws Exception {
+        Student studentBefore = this.studentRepository.findById(4).orElseThrow();
+        Integer sectionId = studentBefore.getSection().getSectionId();
+        Integer teamId = studentBefore.getTeam().getTeamId();
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.message").value("Student deactivated successfully"))
+                .andExpect(jsonPath("$.data").value(org.hamcrest.Matchers.nullValue()));
+
+        Student deactivated = this.studentRepository.findById(4).orElseThrow();
+        Assertions.assertThat(deactivated.isEnabled()).isFalse();
+        Assertions.assertThat(deactivated.getSection().getSectionId()).isEqualTo(sectionId);
+        Assertions.assertThat(deactivated.getTeam().getTeamId()).isEqualTo(teamId);
+    }
+
+    @Test
+    void testCourseAdminDeactivatesStudent() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS));
+
+        Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isFalse();
+    }
+
+    @Test
+    void testDeactivationIsIdempotent() throws Exception {
+        this.studentRepository.findById(4).orElseThrow().setEnabled(false);
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(true))
+                .andExpect(jsonPath("$.code").value(StatusCode.SUCCESS))
+                .andExpect(jsonPath("$.message").value("Student is already deactivated"));
+    }
+
+    @Test
+    void testDeactivationDeniesMissingStudentAndUnauthorizedCallers() throws Exception {
+        this.mockMvc.perform(post(this.baseUrl + "/students/9999/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.adminToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/4/deactivate")
+                        .header(HttpHeaders.AUTHORIZATION, this.adminTimToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.FORBIDDEN));
+
+        Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+    }
+
+    @Test
+    void testGenericStudentUpdateCannotDeactivateAnActiveAccount() throws Exception {
+        Map<String, Object> studentDto = new HashMap<>();
+        studentDto.put("username", "j.smith@abc.edu");
+        studentDto.put("firstName", "John");
+        studentDto.put("lastName", "Smith");
+        studentDto.put("email", "j.smith@abc.edu");
+        studentDto.put("enabled", false);
+
+        this.mockMvc.perform(put(this.baseUrl + "/students/4")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(this.jsonMapper.writeValueAsString(studentDto))
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.flag").value(false))
+                .andExpect(jsonPath("$.code").value(StatusCode.CONFLICT));
+
+        Assertions.assertThat(this.studentRepository.findById(4).orElseThrow().isEnabled()).isTrue();
+    }
+
+    @Test
+    void testDeactivatedStudentCannotLoginOrUsePreviouslyIssuedToken() throws Exception {
+        this.studentRepository.findById(4).orElseThrow().setEnabled(false);
+
+        this.mockMvc.perform(get(this.baseUrl + "/students/4")
+                        .header(HttpHeaders.AUTHORIZATION, this.studentJohnToken))
+                .andExpect(jsonPath("$.code").value(StatusCode.UNAUTHORIZED));
+
+        this.mockMvc.perform(post(this.baseUrl + "/users/login")
+                        .with(httpBasic("j.smith@abc.edu", "123456")))
+                .andExpect(jsonPath("$.code").value(StatusCode.UNAUTHORIZED));
+    }
+
+    @Test
+    void testDeactivatedInstructorCannotUsePreviouslyIssuedTokenOrLogin() throws Exception {
+        this.instructorRepository.findById(2).orElseThrow().setEnabled(false);
+
+        this.mockMvc.perform(post(this.baseUrl + "/students/search")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{}")
+                        .header(HttpHeaders.AUTHORIZATION, this.instructorBillToken))
+                .andExpect(jsonPath("$.code").value(StatusCode.UNAUTHORIZED));
+
+        this.mockMvc.perform(post(this.baseUrl + "/users/login")
+                        .with(httpBasic("b.gates@abc.edu", "123456")))
+                .andExpect(jsonPath("$.code").value(StatusCode.UNAUTHORIZED));
     }
 
 //    @Test

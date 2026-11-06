@@ -13,14 +13,10 @@
     <el-form-item label="Username:" prop="username">
       <el-input v-model="studentBeingEdited.username"></el-input>
     </el-form-item>
-    <el-form-item label="Status:" prop="enabled">
-      <el-switch
-        v-model="studentBeingEdited.enabled"
-        inline-prompt
-        active-text="Enabled"
-        inactive-text="Disabled"
-        style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949"
-      />
+    <el-form-item label="Status:">
+      <el-tag data-cy="student-status" :type="studentBeingEdited.enabled ? 'success' : 'danger'">
+        {{ studentBeingEdited.enabled ? 'Active' : 'Deactivated' }}
+      </el-tag>
     </el-form-item>
     <el-form-item label="First Name:" prop="firstName">
       <el-input v-model="studentBeingEdited.firstName"></el-input>
@@ -35,9 +31,56 @@
       <el-input v-model="studentBeingEdited.teamName" disabled></el-input>
     </el-form-item>
     <div style="display: flex; justify-content: end">
+      <el-button
+        v-if="studentBeingEdited.enabled"
+        data-cy="student-deactivate"
+        type="danger"
+        :loading="deactivationLoading"
+        @click="deactivationConfirmationVisible = true"
+      >
+        Deactivate
+      </el-button>
+      <el-button
+        v-else
+        type="success"
+        :loading="deactivationLoading"
+        @click="reactivateExistingStudent"
+      >
+        Reactivate
+      </el-button>
       <el-button @click="$emit('close-dialog')"> Cancel </el-button>
       <el-button type="primary" @click="updateExistingStudent()"> Confirm </el-button>
     </div>
+    <el-dialog
+      v-model="deactivationConfirmationVisible"
+      title="Deactivate student"
+      width="500px"
+      data-cy="student-deactivation-confirmation"
+    >
+      <p>
+        This will stop the student's access to Project Pulse, including access using previously
+        issued tokens. Their course-section and team memberships, weekly activity reports, and peer
+        evaluations will be retained. They will not be eligible for new peer evaluations, but
+        existing evaluations remain editable until their submission window closes. The student will
+        not be notified.
+      </p>
+      <template #footer>
+        <el-button
+          data-cy="student-deactivation-cancel"
+          @click="deactivationConfirmationVisible = false"
+        >
+          Cancel
+        </el-button>
+        <el-button
+          data-cy="student-deactivation-submit"
+          type="danger"
+          :loading="deactivationLoading"
+          @click="deactivateExistingStudent"
+        >
+          Confirm deactivation
+        </el-button>
+      </template>
+    </el-dialog>
   </el-form>
 </template>
 
@@ -45,7 +88,11 @@
 import { ElMessage } from 'element-plus'
 import type { Student } from '@/apis/student/types'
 import type { FormInstance } from 'element-plus'
-import { findStudentById, updateStudent } from '@/apis/student'
+import {
+  deactivateStudent as deactivateStudentApi,
+  findStudentById,
+  updateStudent
+} from '@/apis/student'
 import { ref, onMounted } from 'vue'
 
 const { studentId } = defineProps(['studentId'])
@@ -63,6 +110,8 @@ const studentBeingEdited = ref<Student>({
 })
 
 const studentForm = ref<FormInstance>() // Form reference
+const deactivationConfirmationVisible = ref(false)
+const deactivationLoading = ref(false)
 
 // Validation rules
 const rules = {
@@ -107,20 +156,49 @@ onMounted(() => {
 async function updateExistingStudent() {
   await studentForm.value!.validate() // Validate the form
 
-  const updatedStudent: Student = {
+  await updateStudent(studentUpdate(studentBeingEdited.value.enabled === true))
+
+  ElMessage.success('Student updated successfully')
+  emit('close-dialog')
+}
+
+async function deactivateExistingStudent() {
+  const studentId = studentBeingEdited.value.id
+  if (studentId === undefined || !Number.isInteger(studentId)) {
+    throw new Error('Cannot deactivate a student without a valid id.')
+  }
+
+  deactivationLoading.value = true
+  try {
+    const result = await deactivateStudentApi(studentId)
+    deactivationConfirmationVisible.value = false
+    ElMessage.success(result.message)
+    emit('close-dialog')
+  } finally {
+    deactivationLoading.value = false
+  }
+}
+
+async function reactivateExistingStudent() {
+  deactivationLoading.value = true
+  try {
+    await updateStudent(studentUpdate(true))
+    ElMessage.success('Student reactivated successfully')
+    emit('close-dialog')
+  } finally {
+    deactivationLoading.value = false
+  }
+}
+
+function studentUpdate(enabled: boolean): Student {
+  return {
     id: studentBeingEdited.value.id,
     username: studentBeingEdited.value.username,
-    enabled: studentBeingEdited.value.enabled,
+    enabled,
     firstName: studentBeingEdited.value.firstName,
     lastName: studentBeingEdited.value.lastName,
     email: studentBeingEdited.value.email
   }
-  console.log(updatedStudent)
-  // Call the API to update the user
-  await updateStudent(updatedStudent)
-
-  ElMessage.success('Student updated successfully')
-  emit('close-dialog')
 }
 </script>
 
