@@ -316,6 +316,22 @@ class EvaluationServiceTest {
     }
 
     @Test
+    void testAddPeerEvaluationRejectsInactiveEvaluatee() {
+        LocalDate fixedDate = LocalDate.of(2023, 8, 13);
+        Clock fixedClock = Clock.fixed(fixedDate.atStartOfDay(ZoneId.systemDefault()).toInstant(), ZoneId.systemDefault());
+        given(this.clock.instant()).willReturn(fixedClock.instant());
+        given(this.clock.getZone()).willReturn(fixedClock.getZone());
+        this.woody.setEnabled(false);
+
+        PeerEvaluation newPeerEvaluation = new PeerEvaluation("2023-W31", this.amanda, this.woody, List.of(), "public comment", "private comment");
+
+        Throwable throwable = catchThrowable(() -> this.evaluationService.addPeerEvaluation(newPeerEvaluation));
+
+        assertThat(throwable).isInstanceOf(PeerEvaluationIllegalArgumentException.class);
+        verify(this.evaluationRepository, times(0)).save(any(PeerEvaluation.class));
+    }
+
+    @Test
     void testAddPeerEvaluationNotInActiveWeeks() {
         // Given
         // No clock is needed here: an inactive week is refused before the previous-week check reads the clock
@@ -425,8 +441,9 @@ class EvaluationServiceTest {
 
         PeerEvaluation oldPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
         oldPeerEvaluation.setPeerEvaluationId(1);
+        this.eric.setEnabled(false);
 
-        PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "new public comment", "new private comment");
+        PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.woody, List.of(), "new public comment", "new private comment");
         update.setPeerEvaluationId(1);
 
         given(this.evaluationRepository.findById(1)).willReturn(Optional.of(oldPeerEvaluation));
@@ -437,6 +454,7 @@ class EvaluationServiceTest {
 
         // Then
         assertThat(updatedPeerEvaluation.getPeerEvaluationId()).isEqualTo(update.getPeerEvaluationId());
+        assertThat(updatedPeerEvaluation.getEvaluatee()).isEqualTo(this.eric);
         assertThat(updatedPeerEvaluation.getPublicComment()).isEqualTo(update.getPublicComment());
         assertThat(updatedPeerEvaluation.getPrivateComment()).isEqualTo(update.getPrivateComment());
         verify(this.evaluationRepository, times(1)).findById(1);

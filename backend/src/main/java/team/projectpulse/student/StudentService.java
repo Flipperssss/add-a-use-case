@@ -4,13 +4,13 @@ import team.projectpulse.section.Section;
 import team.projectpulse.section.SectionRepository;
 import team.projectpulse.system.UserUtils;
 import team.projectpulse.system.exception.ObjectNotFoundException;
+import team.projectpulse.system.exception.StudentLifecycleConflictException;
 import team.projectpulse.user.userinvitation.UserInvitationService;
 import jakarta.transaction.Transactional;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.domain.Specification;
-import org.springframework.security.core.Authentication;
-import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
@@ -27,14 +27,16 @@ public class StudentService {
     private final UserInvitationService userInvitationService;
     private final PasswordEncoder passwordEncoder;
     private final UserUtils userUtils;
+    private final StudentSecurityService studentSecurityService;
 
 
-    public StudentService(StudentRepository studentRepository, SectionRepository sectionRepository, UserInvitationService userInvitationService, PasswordEncoder passwordEncoder, UserUtils userUtils) {
+    public StudentService(StudentRepository studentRepository, SectionRepository sectionRepository, UserInvitationService userInvitationService, PasswordEncoder passwordEncoder, UserUtils userUtils, StudentSecurityService studentSecurityService) {
         this.studentRepository = studentRepository;
         this.sectionRepository = sectionRepository;
         this.userInvitationService = userInvitationService;
         this.passwordEncoder = passwordEncoder;
         this.userUtils = userUtils;
+        this.studentSecurityService = studentSecurityService;
     }
 
     public Page<Student> findByCriteria(Map<String, String> searchCriteria, Pageable pageable) {
@@ -105,8 +107,16 @@ public class StudentService {
     }
 
     public Student updateStudent(Integer studentId, Student update) {
-        Student oldStudent = this.studentRepository.findById(studentId)
+        Integer callerId = this.userUtils.getUserId();
+        Student oldStudent = this.studentRepository.findByIdInCallerScope(studentId, callerId)
                 .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+
+        if (oldStudent.isEnabled() && !update.isEnabled()) {
+            throw new StudentLifecycleConflictException("Use the dedicated deactivation action to deactivate a student.");
+        }
+        if (!oldStudent.isEnabled() && update.isEnabled() && !this.studentSecurityService.canManageLifecycle(studentId)) {
+            throw new AccessDeniedException("No permission.");
+        }
 
         // If the user is not an admin, then the user can only update her username, first rubricName, last rubricName, and email
         oldStudent.setUsername(update.getUsername());
@@ -114,15 +124,26 @@ public class StudentService {
         oldStudent.setLastName(update.getLastName());
         oldStudent.setEmail(update.getEmail());
 
-        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
-
         // If the user is an admin, then the user can update all the fields
-        if (authentication.getAuthorities().stream().anyMatch(grantedAuthority -> grantedAuthority.getAuthority().equals("ROLE_instructor"))) {
+        if (this.userUtils.hasRole("ROLE_instructor")) {
             oldStudent.setEnabled(update.isEnabled());
 //            oldStudent.setRoles(update.getRoles());
         }
 
         return this.studentRepository.save(oldStudent);
+    }
+
+    public boolean deactivateStudent(Integer studentId) {
+        Integer callerId = this.userUtils.getUserId();
+        Student student = this.studentRepository.findByIdInLifecycleScope(studentId, callerId)
+                .orElseThrow(() -> new ObjectNotFoundException("student", studentId));
+        if (!student.isEnabled()) {
+            return false;
+        }
+
+        student.setEnabled(false);
+        this.studentRepository.save(student);
+        return true;
     }
 
     public void deleteStudent(Integer studentId) {

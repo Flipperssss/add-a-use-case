@@ -39,12 +39,12 @@ public class StudentSecurityService {
      */
     public boolean isCurrentUserInstructorOfStudentSection(Integer studentId) {
         Integer instructorIdFromJwt = this.userUtils.getUserId();
-        Student student = this.studentRepository.findById(studentId).orElse(null);
-        if (student == null) {
-            return false;
-        }
-        return student.getSection().getInstructors().stream()
-                .anyMatch(instructor -> instructor.getId().equals(instructorIdFromJwt));
+        return this.studentRepository.findByIdAndSectionInstructorsId(studentId, instructorIdFromJwt).isPresent();
+    }
+
+    public boolean canManageLifecycle(Integer studentId) {
+        Integer callerId = this.userUtils.getUserId();
+        return callerId != null && this.studentRepository.findByIdInLifecycleScope(studentId, callerId).isPresent();
     }
 
 }
