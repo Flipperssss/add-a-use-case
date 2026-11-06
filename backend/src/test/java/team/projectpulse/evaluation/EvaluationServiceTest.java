@@ -442,6 +442,9 @@ class EvaluationServiceTest {
         PeerEvaluation oldPeerEvaluation = new PeerEvaluation("2023-W31", this.john, this.eric, List.of(), "public comment", "private comment");
         oldPeerEvaluation.setPeerEvaluationId(1);
         this.eric.setEnabled(false);
+        Team evaluatorTeam = oldPeerEvaluation.getEvaluator().getTeam();
+        Team evaluateeTeam = oldPeerEvaluation.getEvaluatee().getTeam();
+        String originalWeek = oldPeerEvaluation.getWeek();
 
         PeerEvaluation update = new PeerEvaluation("2023-W31", this.john, this.woody, List.of(), "new public comment", "new private comment");
         update.setPeerEvaluationId(1);
@@ -454,11 +457,16 @@ class EvaluationServiceTest {
 
         // Then
         assertThat(updatedPeerEvaluation.getPeerEvaluationId()).isEqualTo(update.getPeerEvaluationId());
-        assertThat(updatedPeerEvaluation.getEvaluatee()).isEqualTo(this.eric);
+        assertThat(updatedPeerEvaluation.getEvaluator()).isSameAs(this.john);
+        assertThat(updatedPeerEvaluation.getEvaluatee()).isSameAs(this.eric);
+        assertThat(updatedPeerEvaluation.getEvaluator().getTeam()).isSameAs(evaluatorTeam);
+        assertThat(updatedPeerEvaluation.getEvaluatee().getTeam()).isSameAs(evaluateeTeam);
+        assertThat(updatedPeerEvaluation.getWeek()).isEqualTo(originalWeek);
         assertThat(updatedPeerEvaluation.getPublicComment()).isEqualTo(update.getPublicComment());
         assertThat(updatedPeerEvaluation.getPrivateComment()).isEqualTo(update.getPrivateComment());
         verify(this.evaluationRepository, times(1)).findById(1);
         verify(this.evaluationRepository, times(1)).save(oldPeerEvaluation);
+        verify(this.evaluationRepository, times(1)).save(any(PeerEvaluation.class));
     }
 
     @Test
