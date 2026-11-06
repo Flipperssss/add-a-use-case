@@ -170,9 +170,9 @@ async function deactivateExistingStudent() {
 
   deactivationLoading.value = true
   try {
-    await deactivateStudentApi(studentId)
+    const result = await deactivateStudentApi(studentId)
     deactivationConfirmationVisible.value = false
-    ElMessage.success('Student deactivated successfully')
+    ElMessage.success(result.message)
     emit('close-dialog')
   } finally {
     deactivationLoading.value = false

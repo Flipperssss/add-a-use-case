@@ -42,6 +42,26 @@ describe('Student deactivation', () => {
     cy.wait('@deactivate').its('request.url').should('include', '/students/4/deactivate')
     cy.contains('Student deactivated successfully').should('be.visible')
   })
+
+  it('shows when the student was already deactivated', () => {
+    cy.intercept('POST', '**/students/4/deactivate', {
+      body: {
+        flag: true,
+        code: 200,
+        message: 'Student is already deactivated',
+        data: null
+      }
+    }).as('deactivate')
+
+    cy.contains('.el-table__row', 'j.smith@abc.edu').within(() => {
+      cy.get('button').click()
+    })
+    cy.get('[data-cy=student-deactivate]').click()
+    cy.get('[data-cy=student-deactivation-submit]').click()
+
+    cy.wait('@deactivate')
+    cy.contains('Student is already deactivated').should('be.visible')
+  })
 })
 
 describe('Peer evaluation of deactivated teammates', () => {
